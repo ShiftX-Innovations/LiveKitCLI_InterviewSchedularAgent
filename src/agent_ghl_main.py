@@ -31,7 +31,7 @@ from livekit.plugins.turn_detector.multilingual import MultilingualModel
 from datetime import datetime
 from dataclasses import dataclass, field
 
-logger = logging.getLogger("google-interview-agent")
+logger = logging.getLogger("agent-interview-agent")
 
 load_dotenv(".env.local")
 
@@ -71,9 +71,10 @@ class DefaultAgent(Agent):
     def __init__(self, metadata: str) -> None:
         self._templater = VariableTemplater(metadata)
         self._start_time = datetime.now()
+        self._api_called = False
         self.collected_data = {
-            "transcript": "",
-            "customerAnswers": "{}", 
+            "transcript": "N/A",
+            "customerAnswers": "N/A", 
             "qualify_status": False,
             "interview_scheduled_date": "",
             "interview_scheduled_time": "",
@@ -558,11 +559,11 @@ FINAL NON-NEGOTIABLE RULES
         }
         payload = {
             "roomName": room_name,
-            "agentID": "interview-agent", # Or get from ctx
-            "transcript": "",
+            "agentID": "interview-agent",
+            "transcript": "N/A",
             "endedReason": reason,
             "successEvaluation": "success",
-            "customerAnswers": "",
+            "customerAnswers": "N/A",
             "qualified": self.collected_data["qualify_status"],
             "call_status": self.collected_data.get("call_status", "not_scheduled"),
             "interview_scheduled_date": self.collected_data.get("interview_scheduled_date", ""),
@@ -672,7 +673,7 @@ FINAL NON-NEGOTIABLE RULES
             "successEvaluation": successEvaluation,
             "customerAnswers": customerAnswers,
             "qualified": qualified,
-            "call_status": call_status,
+            "call_status": self.collected_data.get("call_status"),
             "interview_scheduled_date": interview_scheduled_date,
             "interview_scheduled_time": interview_scheduled_time,
         }
@@ -800,9 +801,16 @@ FINAL NON-NEGOTIABLE RULES
 
         context.disallow_interruptions()
 
-        url = "https://voxahr-api.shiftx.tech/api/calendar-integrations/jobs/ac03beb3-4bf1-4416-8158-b6e17e197695/available-slots"
+        url = "https://hook.us2.make.com/kuls5audbrhoij6fxo3splf4ebghoqa9"
         payload = {
-            "provider": "google"
+            "mobile": '',
+            "time": '',
+            "calender_id": calender_id,
+            "name": '',
+            "email": '',
+            "external_id": '',
+            "start_time": slot_start_time,
+            "end_time": slot_end_time,
         }
 
         try:
@@ -826,25 +834,44 @@ def prewarm(proc: JobProcess):
 
 server.setup_fnc = prewarm
 
-@server.rtc_session(agent_name="google-agent")
+async def on_session_end(ctx: JobContext) -> None:
+    report = ctx.make_session_report()
+    report_dict = report.to_dict()
+    chat_history = report_dict["chat_history"]
+    
+    items = chat_history.get("items", [])
+    filtered_items = [item for item in items if item.get("type") == "message"]
+    filtered_transcript = {"items": filtered_items}
+    
+    payload = {
+        "roomName": ctx.room.name,
+        "transcript" : filtered_transcript,
+        "sessionReport": report_dict,
+        "receivedAt": datetime.now(UTC).isoformat()
+    }
+
+    async with httpx.AsyncClient(timeout=10) as client:
+        await client.post(
+            "https://hr.meetvoxa.ai/api/calls/transcript",
+            json=payload,
+        )
+
+    print(f"Session report for {ctx.room.name} saved to {payload}")
+    
+@server.rtc_session(agent_name="interview-agent",on_session_end=on_session_end)
 async def entrypoint(ctx: JobContext):
     room_name = ctx.room.name
     
     agent = DefaultAgent(metadata=ctx.job.metadata)
 
-    @ctx.room.on("transcription_received")
-    def on_transcription(transcription: rtc.Transcription):
-        for segment in transcription.segments:
-            text = segment.text.strip()
-            if text:
-                agent.collected_data["transcript"] += f"User: {text}\n"
-                logger.info(f"Transcript updated: User said {text}")
-
+    # 4. Define the shutdown callback
     async def final_cleanup():
-        await agent.trigger_end_call_api(room_name=room_name, reason="ROOM_CLOSED_OR_DISCONNECTED")
+        # This will now correctly reference the agent instance that collected the data
+        await agent.trigger_end_call_api(room_name=room_name, reason="Call_Ended_By_Candidate")
 
     ctx.add_shutdown_callback(final_cleanup)
 
+    # 5. Define the Session
     session = AgentSession(
         stt=inference.STT(model="deepgram/nova-3", language="en"),
         llm=inference.LLM(model="openai/gpt-4.1-mini"),

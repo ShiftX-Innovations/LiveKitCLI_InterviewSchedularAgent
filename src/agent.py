@@ -28,10 +28,11 @@ from livekit.plugins import (
     silero,
 )
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
-from datetime import datetime
+from datetime import datetime, UTC
 from dataclasses import dataclass, field
+import httpx
 
-logger = logging.getLogger("agent-interview-agent")
+logger = logging.getLogger("google-interview-agent")
 
 load_dotenv(".env.local")
 
@@ -71,10 +72,9 @@ class DefaultAgent(Agent):
     def __init__(self, metadata: str) -> None:
         self._templater = VariableTemplater(metadata)
         self._start_time = datetime.now()
-        self._api_called = False
         self.collected_data = {
-            "transcript": "N/A",
-            "customerAnswers": "N/A", 
+            "transcript": "",
+            "customerAnswers": "{}", 
             "qualify_status": False,
             "interview_scheduled_date": "",
             "interview_scheduled_time": "",
@@ -83,7 +83,6 @@ class DefaultAgent(Agent):
         super().__init__(
             instructions=self._templater.render(
 """
-
 
 You are Jane, a friendly, emotionally intelligent, and professional Talent Acquisition Assistant. You sound like a real human on a call — never robotic, never scripted. You speak clearly at a natural human pace, with warmth, empathy, and confidence.
 
@@ -149,6 +148,7 @@ You will receive and store internally:
 - slot_end_time
 - interview_type
 - address
+- job_id
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 SPEAKING RULES (VOICE-OPTIMIZED)
@@ -210,11 +210,11 @@ ELSE -
     Example:
     - Candidate says: "Thursday at 2 PM"
     - You match this to: "Thursday, December 26 at 2:00 PM" (from get_slot array)
-    - You send to schedule_interview: EXACT string "Thursday, December 26 at 2:00 PM"
+    - You send to schedule_interview: EXACT in iso format
 
     If candidate is qualified and agrees to interview:
     - You MUST suggest available slots by getting data from get_slot
-    - You MUST call schedule_interview with the EXACT slot in text
+    - You MUST call schedule_interview with the EXACT slot in iso format
     - You MUST wait for schedule_interview tool to complete before calling end_call 
 
 end of IF condition
@@ -370,7 +370,7 @@ FLOW : 02
     "Thanks for sharing all that. Based on what you've told me, I think you'd be a great fit to speak with our hiring team."
 
     Present scheduling:
-    Available_Calendar_slot : [You MUST call get_slot tool using values of [calendar_id], [slot_start_time] and [slot_end_time] ]
+    Available_Calendar_slot : [You MUST call get_slot tool using values of [job_id]
 
     "We have a latest interview slot available Available_Calendar_slot . Which one works best for your schedule?"
 
@@ -398,7 +398,7 @@ FLOW : 02
 
     CLEAR CHOICE (e.g., "Thursday at 2pm"):
 
-    → IMMEDIATELY call schedule_interview with the EXACT slot text (no modifications)
+    → IMMEDIATELY call schedule_interview with the EXACT slot in iso date time format
     Then
     "Perfect, I'll try to get that scheduled for you right now. hold on a seconds"
     → Wait for schedule_interview to complete
@@ -414,7 +414,7 @@ FLOW : 02
     VAGUE (e.g., "Maybe Thursday or Friday?"):
     "Could you pick one specific time? I want to make sure I book the right slot."
     → Wait for clarification
-    → If they give a clear time: Proceed with schedule_interview using EXACT slot text
+    → If they give a clear time: Proceed with schedule_interview using EXACT slot in date time iso format
     → If still unclear after asking twice: 
     Set endedReason = "Not Qualified", call_status = "Not Qualified"
     Say: "No worries - I'll have someone from our team email you to find a time that works."
@@ -541,8 +541,7 @@ FINAL NON-NEGOTIABLE RULES
 15. NEVER go start of the conversation  after calling end_call you can say Thank you- this is the #1 rule to prevent duplicate goodbyes
 16. Always allow 2 seconds after final goodbye before calling end_call to ensure speech completes
 
-
-                        
+                    
 """
 
 ),)
@@ -559,11 +558,11 @@ FINAL NON-NEGOTIABLE RULES
         }
         payload = {
             "roomName": room_name,
-            "agentID": "interview-agent",
-            "transcript": "N/A",
+            "agentID": "interview-agent", # Or get from ctx
+            "transcript": "",
             "endedReason": reason,
             "successEvaluation": "success",
-            "customerAnswers": "N/A",
+            "customerAnswers": "",
             "qualified": self.collected_data["qualify_status"],
             "call_status": self.collected_data.get("call_status", "not_scheduled"),
             "interview_scheduled_date": self.collected_data.get("interview_scheduled_date", ""),
@@ -673,7 +672,7 @@ FINAL NON-NEGOTIABLE RULES
             "successEvaluation": successEvaluation,
             "customerAnswers": customerAnswers,
             "qualified": qualified,
-            "call_status": self.collected_data.get("call_status"),
+            "call_status": call_status,
             "interview_scheduled_date": interview_scheduled_date,
             "interview_scheduled_time": interview_scheduled_time,
         }
@@ -709,7 +708,7 @@ FINAL NON-NEGOTIABLE RULES
         """
 
         url = f"https://hr.meetvoxa.ai/api/calls/get-meeting-details/{quote(externalId, safe='')}"
-        # url = f"https://hr.meetvoxa.ai/api/calls/get-meeting-details/6d1df6b7-3c3c-4f7a-be71-62cdd3411386"
+        # url = f"https://hr.meetvoxa.ai/api/calls/get-meeting-details/8cf9b39a-4534-413e-91f8-b13fbc02e1ce"
 
         try:
             session = utils.http_context.http_session()
@@ -738,34 +737,22 @@ FINAL NON-NEGOTIABLE RULES
 
     @function_tool(name="schedule_interview")
     async def _http_tool_schedule_interview(
-        self, context: RunContext, mobile: str, time: str, calender_id: str, name: str, email: str, external_id: str, start_time: str, end_time: str
+        self, context: RunContext, external_id: str, start_time: str
     ) -> str:
         """
         Schedule interview for qualified candidates.
 
         Args:
-            mobile: 
-            time: 
-            calender_id: 
-            name: 
-            email: 
             external_id: 
-            start_time:
-            end_time:
+            start_iso: candidate accepted date time in iso format
         """
 
         context.disallow_interruptions()
 
-        url = "https://hook.us2.make.com/kuls5audbrhoij6fxo3splf4ebghoqa9"
+        url = "https://hr.meetvoxa.ai/api/calendar-integrations/public/interviews/schedule"
         payload = {
-            "mobile": mobile,
-            "time": time,
-            "calender_id": calender_id,
-            "name": name,
-            "email": email,
-            "external_id": external_id,
-            "start_time": start_time,
-            "end_time": end_time,
+            "match_id": external_id,
+            "start_iso": start_time
         }
 
         try:
@@ -776,8 +763,6 @@ FINAL NON-NEGOTIABLE RULES
                 if resp.status >= 400:
                     raise ToolError(f"error: HTTP {resp.status}: {body}")
                 
-                self.collected_data["interview_scheduled_date"] = start_time
-                self.collected_data["interview_scheduled_time"] = end_time
                 self.collected_data["call_status"] = "scheduled"
                 
                 return body
@@ -788,39 +773,35 @@ FINAL NON-NEGOTIABLE RULES
 
     @function_tool(name="get_slot")
     async def _http_tool_get_slot(
-        self, context: RunContext, calender_id: str, slot_start_time: str, slot_end_time:str
+        self, context: RunContext, job_id: str,
     ) -> str:
         """
-        Get latest interview slots for qualified candidates.
+        Get latest interview slots for qualified candidates and suggest them earliest avaiable slot.
 
         Args:
-            calender_id: 
-            slot_start_time: 
-            slot_end_time: 
+            job_id: [job_id]
         """
 
         context.disallow_interruptions()
-
-        url = "https://hook.us2.make.com/kuls5audbrhoij6fxo3splf4ebghoqa9"
+        headers = {
+                    "Content-Type": "application/json",
+                }
+        # url = "https://voxahr-api.shiftx.tech/api/calendar-integrations/jobs/31c8298b-7170-4ca6-a655-ab54b7127a5a/available-slots"
+        url = f"https://voxahr-api.shiftx.tech/api/calendar-integrations/jobs/{quote(job_id, safe='')}/available-slots"
         payload = {
-            "mobile": '',
-            "time": '',
-            "calender_id": calender_id,
-            "name": '',
-            "email": '',
-            "external_id": '',
-            "start_time": slot_start_time,
-            "end_time": slot_end_time,
+            "provider": "google"
         }
 
         try:
             session = utils.http_context.http_session()
             timeout = aiohttp.ClientTimeout(total=10)
-            async with session.post(url, timeout=timeout, json=payload) as resp:
+            async with session.post(url, timeout=timeout,headers=headers, json=payload) as resp:
                 body = await resp.text()
                 if resp.status >= 400:
                     raise ToolError(f"error: HTTP {resp.status}: {body}")
+                logger.info(f"available slots: {body}")
                 return body
+                
         except ToolError:
             raise
         except (aiohttp.ClientError, asyncio.TimeoutError) as e:
@@ -834,28 +815,41 @@ def prewarm(proc: JobProcess):
 
 server.setup_fnc = prewarm
 
-@server.rtc_session(agent_name="interview-agent")
+async def on_session_end(ctx: JobContext) -> None:
+    report = ctx.make_session_report()
+    report_dict = report.to_dict()
+    chat_history = report_dict["chat_history"]
+    
+    items = chat_history.get("items", [])
+    filtered_items = [item for item in items if item.get("type") == "message"]
+    filtered_transcript = {"items": filtered_items}
+    
+    payload = {
+        "roomName": ctx.room.name,
+        "transcript" : filtered_transcript,
+        "sessionReport": report_dict,
+        "receivedAt": datetime.now(UTC).isoformat()
+    }
+
+    async with httpx.AsyncClient(timeout=10) as client:
+        await client.post(
+            "https://hr.meetvoxa.ai/api/calls/transcript",
+            json=payload,
+        )
+
+    print(f"Session report for {ctx.room.name} saved to {payload}")
+
+@server.rtc_session(agent_name="google-agent",on_session_end=on_session_end)
 async def entrypoint(ctx: JobContext):
     room_name = ctx.room.name
     
     agent = DefaultAgent(metadata=ctx.job.metadata)
 
-    @ctx.room.on("transcription_received")
-    def on_transcription(transcription: rtc.Transcription):
-        for segment in transcription.segments:
-            text = segment.text.strip()
-            if text:
-                agent.collected_data["transcript"] += f"User: {text}\n"
-                logger.info(f"Transcript updated: User said {text}")
-
-    # 4. Define the shutdown callback
     async def final_cleanup():
-        # This will now correctly reference the agent instance that collected the data
-        await agent.trigger_end_call_api(room_name=room_name, reason="ROOM_CLOSED_OR_DISCONNECTED")
+        await agent.trigger_end_call_api(room_name=room_name, reason="Call_Ended_By_Candidate")
 
     ctx.add_shutdown_callback(final_cleanup)
 
-    # 5. Define the Session
     session = AgentSession(
         stt=inference.STT(model="deepgram/nova-3", language="en"),
         llm=inference.LLM(model="openai/gpt-4.1-mini"),
