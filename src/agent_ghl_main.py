@@ -864,9 +864,7 @@ async def entrypoint(ctx: JobContext):
     
     agent = DefaultAgent(metadata=ctx.job.metadata)
 
-    # 4. Define the shutdown callback
     async def final_cleanup():
-        # This will now correctly reference the agent instance that collected the data
         await agent.trigger_end_call_api(room_name=room_name, reason="Call_Ended_By_Candidate")
 
     ctx.add_shutdown_callback(final_cleanup)
