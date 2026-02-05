@@ -708,9 +708,9 @@ FINAL NON-NEGOTIABLE RULES
             externalId: {{metadata.external_id}}
         """
 
-        # url = f"https://hr.meetvoxa.ai/api/calls/get-meeting-details/{quote(externalId, safe='')}"
+        url = f"https://hr.meetvoxa.ai/api/calls/get-meeting-details/{quote(externalId, safe='')}"
         # url = f"https://hr.meetvoxa.ai/api/calls/get-meeting-details/6d1df6b7-3c3c-4f7a-be71-62cdd3411386"
-        url = f"http://127.0.0.1:8000/api/calls/get-meeting-details/6d1df6b7-3c3c-4f7a-be71-62cdd3411386"
+        # url = f"http://127.0.0.1:8000/api/calls/get-meeting-details/6d1df6b7-3c3c-4f7a-be71-62cdd3411386"
 
         try:
             session = utils.http_context.http_session()
