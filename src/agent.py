@@ -1,6 +1,6 @@
 import logging
 from urllib.parse import quote
-from typing import Optional
+from typing import Optional, TypedDict
 import aiohttp
 import asyncio
 import json
@@ -37,6 +37,10 @@ logger = logging.getLogger("google-interview-agent")
 
 load_dotenv(".env.local")
 
+class EvaluationSchema(TypedDict):
+    question: str
+    answer: str
+    score: float
 
 class VariableTemplater:
     def __init__(self, metadata: str, additional: dict[str, dict[str, str]] | None = None) -> None:
@@ -78,6 +82,9 @@ class DefaultAgent(Agent):
 
         self._templater = templater
         self._start_time = datetime.now()
+        self._api_called = False
+        self.evaluation = {}
+        self.evaluation_average = 0.0
         self.collected_data = {
             "transcript": "",
             "customerAnswers": "{}", 
@@ -112,11 +119,12 @@ class DefaultAgent(Agent):
             "call_status": self.collected_data.get("call_status", "not_scheduled"),
             "interview_scheduled_date": self.collected_data.get("interview_scheduled_date", ""),
             "interview_scheduled_time": self.collected_data.get("interview_scheduled_time", ""),
+            "call_evaluation": self.evaluation,
         }
 
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.post("https://hr.meetvoxa.ai/api/calls/webhook/end-meeting",headers=headers, json=payload) as resp:
+                async with session.post("https://voxahr-api.shiftx.tech/api/calls/webhook/end-meeting",headers=headers, json=payload) as resp:
                     if resp.status >= 400:
                         logger.warning(f"Webhook failed: {resp.status}")
                         
@@ -146,7 +154,9 @@ class DefaultAgent(Agent):
         qualify_status: bool = None,
         call_status: str = None,
         interview_scheduled_date: str = None,
-        interview_scheduled_time: str = None
+        interview_scheduled_time: str = None,
+        evaluation: Optional[EvaluationSchema] = None,
+        evaluation_average: float = None,
     ):
         """
         Call this tool as soon as the candidate qualified for interview or successfully scheduled a interview or candidate accept a interview date and time.
@@ -159,6 +169,10 @@ class DefaultAgent(Agent):
             self.collected_data["interview_scheduled_date"] = interview_scheduled_date
         if interview_scheduled_time:
             self.collected_data["interview_scheduled_time"] = interview_scheduled_time
+        if evaluation:
+            self.evaluation = evaluation
+        if evaluation_average:
+            self.evaluation_average = evaluation_average
             
         logger.info(f"Updated candidate state: {self.collected_data}")
         return "Information saved successfully."
@@ -191,7 +205,7 @@ class DefaultAgent(Agent):
         self._api_called = True
         context.disallow_interruptions()
 
-        url = "https://hr.meetvoxa.ai/api/calls/webhook/end-meeting"
+        url = "https://voxahr-api.shiftx.tech/api/calls/webhook/end-meeting"
         headers = {
             "Content-Type": "application/json",
         }
@@ -242,8 +256,9 @@ class DefaultAgent(Agent):
             externalId: {{metadata.external_id}}
         """
 
-        # url = f"https://hr.meetvoxa.ai/api/calls/get-meeting-details/{quote(externalId, safe='')}"
-        url = f"https://hr.meetvoxa.ai/api/calls/get-meeting-details/8cf9b39a-4534-413e-91f8-b13fbc02e1ce"
+        # url = f"https://voxahr-api.shiftx.tech/api/calls/get-meeting-details/{quote(externalId, safe='')}"
+        url = f"https://voxahr-api.shiftx.tech/api/calls/get-meeting-details/7b7d4bd0-a0f7-4409-9bf6-cb37c75ef1a6"
+        # url = f"http://127.0.0.1:8000/api/calls/get-meeting-details/52e16cd9-f4c5-46ea-97e7-4aaf57d75edf"
 
         try:
             session = utils.http_context.http_session()
@@ -297,7 +312,7 @@ class MeetingSchedularAgent(Agent):
 
         context.disallow_interruptions()
 
-        url = "https://hr.meetvoxa.ai/api/calendar-integrations/public/interviews/schedule"
+        url = "https://voxahr-api.shiftx.tech/api/calendar-integrations/public/interviews/schedule"
         payload = {
             "match_id": external_id,
             "start_iso": start_time
@@ -382,10 +397,16 @@ async def on_session_end(ctx: JobContext) -> None:
 
     async with httpx.AsyncClient(timeout=10) as client:
         await client.post(
-            "https://hr.meetvoxa.ai/api/calls/transcript",
+            "https://voxahr-api.shiftx.tech/api/calls/transcript",
             json=payload,
         )
-
+        
+    agent = ctx.session.agent 
+    await agent.trigger_end_call_api(
+        room_name=ctx.room.name,
+        reason="Call_Ended_By_Candidate"
+    )
+    
     print(f"Session report for {ctx.room.name} saved to {payload}")
 
 @server.rtc_session(agent_name="google-agent",on_session_end=on_session_end)
