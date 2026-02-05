@@ -120,6 +120,7 @@ class DefaultAgent(Agent):
             "interview_scheduled_date": self.collected_data.get("interview_scheduled_date", ""),
             "interview_scheduled_time": self.collected_data.get("interview_scheduled_time", ""),
             "call_evaluation": self.evaluation,
+            "evaluation_average": self.evaluation_average
         }
 
         try:
@@ -224,6 +225,8 @@ class DefaultAgent(Agent):
             "call_status": call_status,
             "interview_scheduled_date": interview_scheduled_date,
             "interview_scheduled_time": interview_scheduled_time,
+            "call_evaluation": self.evaluation,
+            "evaluation_average": self.evaluation_average
         }
 
         try:
@@ -256,8 +259,8 @@ class DefaultAgent(Agent):
             externalId: {{metadata.external_id}}
         """
 
-        # url = f"https://voxahr-api.shiftx.tech/api/calls/get-meeting-details/{quote(externalId, safe='')}"
-        url = f"https://voxahr-api.shiftx.tech/api/calls/get-meeting-details/7b7d4bd0-a0f7-4409-9bf6-cb37c75ef1a6"
+        url = f"https://voxahr-api.shiftx.tech/api/calls/get-meeting-details/{quote(externalId, safe='')}"
+        # url = f"https://voxahr-api.shiftx.tech/api/calls/get-meeting-details/7b7d4bd0-a0f7-4409-9bf6-cb37c75ef1a6"
         # url = f"http://127.0.0.1:8000/api/calls/get-meeting-details/52e16cd9-f4c5-46ea-97e7-4aaf57d75edf"
 
         try:
@@ -390,7 +393,7 @@ async def on_session_end(ctx: JobContext) -> None:
     payload = {
         "roomName": ctx.room.name,
         "transcript" : filtered_transcript,
-        "sessionReport": report_dict,
+        # "sessionReport": report_dict,
         "receivedAt": datetime.now(UTC).isoformat(),
         "agentData": ctx.proc.userdata.get("agent_data"),
     }
@@ -409,7 +412,7 @@ async def on_session_end(ctx: JobContext) -> None:
     
     print(f"Session report for {ctx.room.name} saved to {payload}")
 
-@server.rtc_session(agent_name="google-agent",on_session_end=on_session_end)
+@server.rtc_session(agent_name="interview-agent",on_session_end=on_session_end)
 async def entrypoint(ctx: JobContext):
     room_name = ctx.room.name
     
