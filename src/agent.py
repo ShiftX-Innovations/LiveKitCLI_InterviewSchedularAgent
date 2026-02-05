@@ -789,7 +789,7 @@ FINAL NON-NEGOTIABLE RULES
                     "Content-Type": "application/json",
                 }
         # url = "https://voxahr-api.shiftx.tech/api/calendar-integrations/jobs/31c8298b-7170-4ca6-a655-ab54b7127a5a/available-slots"
-        url = f"https://voxahr-api.shiftx.tech/api/calendar-integrations/jobs/{quote(job_id, safe='')}/available-slots"
+        url = f"https://hr.meetvoxa.ai/api/calendar-integrations/jobs/{quote(job_id, safe='')}/available-slots"
         payload = {
             "provider": "google"
         }
