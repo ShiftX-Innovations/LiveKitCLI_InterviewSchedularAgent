@@ -751,7 +751,7 @@ FINAL NON-NEGOTIABLE RULES
 
         context.disallow_interruptions()
 
-        url = "https://hr.meetvoxa.ai/api/calendar-integrations/public/interviews/schedule"
+        url = "https://hr.meetvoxa.ai/api/calendar-integrations/public/interviews/schedule/updated"
         payload = {
             "match_id": external_id,
             "start_iso": start_time
